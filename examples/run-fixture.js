@@ -38,10 +38,9 @@ for (const frame of frames) {
     imagePoints.push(ids.map((id) => frame.byId.get(id)));
 }
 
-const calibratorOptions = {
-    modulePath: "../dist/wasm/calibrate.js",
-};
-const calibrator = await initCalibrator(calibratorOptions);
+const calibrator = await initCalibrator({
+    wasmPath: new URL("../dist/wasm/calibrate.wasm", import.meta.url).href,
+});
 
 const t0 = performance.now();
 const initial = calibrator.calibrateCameraRO({

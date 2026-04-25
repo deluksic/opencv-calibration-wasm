@@ -98,22 +98,14 @@ interface CalibrateWasmModule {
     HEAP32: Int32Array;
 }
 
-type CreateModule = () => Promise<CalibrateWasmModule> | CalibrateWasmModule;
+type CreateModule = (
+    options?: { locateFile?: (path: string) => string }
+) => Promise<CalibrateWasmModule> | CalibrateWasmModule;
 export interface Calibrator {
     module: CalibrateWasmModule;
     calibrateCameraRO(input: CalibrateCameraROInput): CalibrateCameraROResult;
     solvePnP(input: SolvePnPInput): SolvePnPResult;
     projectPoints(input: ProjectPointsInput): ProjectPointsResult;
-}
-
-let modulePromise: Promise<CalibrateWasmModule> | undefined;
-let calibratorPromise: Promise<Calibrator> | undefined;
-
-async function getModule(createModule: CreateModule): Promise<CalibrateWasmModule> {
-    if (!modulePromise) {
-        modulePromise = Promise.resolve(createModule());
-    }
-    return modulePromise;
 }
 
 function normalizeMultiviewInput(input: {
@@ -168,21 +160,21 @@ function normalizeMultiviewInput(input: {
     };
 }
 
-export async function initCalibrator(): Promise<Calibrator> {
-    if (!calibratorPromise) {
-        calibratorPromise = (async () => {
-            // @ts-expect-error
-            const { default: createModule } = await import(new URL("./wasm/calibrate.js", import.meta.url));
-            const module = await getModule(createModule as CreateModule);
-            return {
-                module,
-                calibrateCameraRO: (input) => calibrateCameraROWithModule(module, input),
-                solvePnP: (input) => solvePnPWithModule(module, input),
-                projectPoints: (input) => projectPointsWithModule(module, input),
-            };
-        })();
+export async function initCalibrator(options: { wasmPath: string }): Promise<Calibrator> {
+    if (!options?.wasmPath) {
+        throw new Error("initCalibrator requires { wasmPath }.");
     }
-    return calibratorPromise;
+    // @ts-expect-error generated at wasm build time
+    const { default: createModule } = await import("./wasm/calibrate.js");
+    const module = await Promise.resolve((createModule as CreateModule)({
+        locateFile: (path: string) => (path.endsWith(".wasm") ? options.wasmPath : path),
+    }));
+    return {
+        module,
+        calibrateCameraRO: (input) => calibrateCameraROWithModule(module, input),
+        solvePnP: (input) => solvePnPWithModule(module, input),
+        projectPoints: (input) => projectPointsWithModule(module, input),
+    };
 }
 
 function calibrateCameraROWithModule(

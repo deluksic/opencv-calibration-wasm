@@ -42,6 +42,7 @@ EMPP="${EMSDK_DIR}/upstream/emscripten/em++"
   -msimd128 \
   -flto \
   -s WASM=1 \
+  -s ENVIRONMENT=web,worker \
   -s FILESYSTEM=0 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \

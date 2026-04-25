@@ -6,8 +6,7 @@ Standalone npm package for browser camera calibration using OpenCV `calibrateCam
 
 Exports:
 
-- `initCalibrator(options?)` — loads the WASM module and returns a **calibrator**.
-- `DEFAULT_WASM_MODULE_PATH` — resolved URL for the Emscripten loader (works with Vite hashed assets).
+- `initCalibrator({ wasmPath })` — loads the WASM module and returns a **calibrator**.
 - `CALIBRATION_FLAGS` — OpenCV-compatible bitmasks.
 
 The returned **calibrator** object:
@@ -18,6 +17,7 @@ The returned **calibrator** object:
 - `calibrator.module` — low-level Emscripten module (advanced use only).
 
 The wrapper stays close to OpenCV: you pass multiview `objectPoints` and `imagePoints`; calibration optimizes the joint model OpenCV uses.
+Each call to `initCalibrator` creates an independent calibrator instance bound to the provided `wasmPath`.
 
 ## Basic usage
 
@@ -26,9 +26,9 @@ import {
   initCalibrator,
   CALIBRATION_FLAGS
 } from "@deluksic/opencv-calibration-wasm";
+import CALIBRATE_WASM_PATH from "@deluksic/opencv-calibration-wasm/wasm/calibrate.wasm?url";
 
-const calibrator = await initCalibrator();
-// optional: await initCalibrator({ modulePath: customUrl })
+const calibrator = await initCalibrator({ wasmPath: CALIBRATE_WASM_PATH });
 
 const calib = calibrator.calibrateCameraRO({
   objectPoints,
@@ -134,13 +134,14 @@ pnpm example
 
 ## Browser / Vite
 
-Default `initCalibrator()` resolves the WASM loader via `import.meta.url`, so Vite can hash and bundle `calibrate.js` / `calibrate.wasm` without hardcoding paths.
+Use Vite's `?url` import for the `.wasm` file and pass that URL to `initCalibrator`.
 
 ```ts
 import { initCalibrator } from "@deluksic/opencv-calibration-wasm";
+import CALIBRATE_WASM_PATH from "@deluksic/opencv-calibration-wasm/wasm/calibrate.wasm?url";
 
-const calibrator = await initCalibrator();
+const calibrator = await initCalibrator({ wasmPath: CALIBRATE_WASM_PATH });
 const result = calibrator.calibrateCameraRO(input);
 ```
 
-If you need an explicit URL (e.g. custom hosting), pass `modulePath` to `initCalibrator({ modulePath })` once.
+Provide the `.wasm` URL to `initCalibrator({ wasmPath })` (for example via `?url` in Vite).
