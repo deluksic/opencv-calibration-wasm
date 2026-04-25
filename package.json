@@ -1,6 +1,6 @@
 {
   "name": "@deluksic/opencv-calibration-wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browser-ready OpenCV calibrateCameraRO WASM package",
   "type": "module",
   "main": "./dist/index.mjs",
