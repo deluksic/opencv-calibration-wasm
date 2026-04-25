@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { calibrateCameraRO, projectPoints } from "../dist/index.mjs";
+import { initCalibrator } from "../dist/index.js";
 
 const fixturePath = process.argv[2] ?? "./calibration_export_1777035497240.json";
 const json = JSON.parse(await readFile(new URL(fixturePath, import.meta.url), "utf-8"));
@@ -41,9 +41,10 @@ for (const frame of frames) {
 const calibratorOptions = {
     modulePath: "../dist/wasm/calibrate.mjs",
 };
+const calibrator = await initCalibrator(calibratorOptions);
 
 const t0 = performance.now();
-const initial = await calibrateCameraRO({
+const initial = calibrator.calibrateCameraRO({
     objectPoints,
     imagePoints,
     imageSize: json.resolution,
@@ -51,10 +52,10 @@ const initial = await calibrateCameraRO({
     flags: 0,
     criteria: { type: 3, maxCount: 100, epsilon: 1e-9 },
     maxDistCoeffs: 14,
-}, calibratorOptions);
+});
 const t1 = performance.now();
 
-const refined = await calibrateCameraRO({
+const refined = calibrator.calibrateCameraRO({
     objectPoints,
     imagePoints,
     imageSize: json.resolution,
@@ -64,19 +65,19 @@ const refined = await calibrateCameraRO({
     flags: 0,
     criteria: { type: 3, maxCount: 30, epsilon: 1e-3 },
     maxDistCoeffs: 14,
-}, calibratorOptions);
+});
 const t2 = performance.now();
 
 const reprojectionObjectPoints = refined.newObjPoints.length === ids.length
     ? Array.from({ length: frames.length }, () => refined.newObjPoints)
     : objectPoints;
-const reprojectionOptimized = await projectPoints({
+const reprojectionOptimized = calibrator.projectPoints({
     objectPoints: reprojectionObjectPoints,
     rvecs: refined.rvecs,
     tvecs: refined.tvecs,
     cameraMatrix: refined.cameraMatrix,
     distortionCoefficients: refined.distortionCoefficients,
-}, calibratorOptions);
+});
 const t3 = performance.now();
 
 const singleFrameIndex = 0;
@@ -84,13 +85,13 @@ const singleFrameObjectPoints = [reprojectionObjectPoints[singleFrameIndex]];
 const singleFrameRvecs = [refined.rvecs[singleFrameIndex]];
 const singleFrameTvecs = [refined.tvecs[singleFrameIndex]];
 const tSingle0 = performance.now();
-const singleFrameReprojection = await projectPoints({
+const singleFrameReprojection = calibrator.projectPoints({
     objectPoints: singleFrameObjectPoints,
     rvecs: singleFrameRvecs,
     tvecs: singleFrameTvecs,
     cameraMatrix: refined.cameraMatrix,
     distortionCoefficients: refined.distortionCoefficients,
-}, calibratorOptions);
+});
 const tSingle1 = performance.now();
 
 const initialMs = t1 - t0;

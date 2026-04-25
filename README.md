@@ -6,27 +6,30 @@ Standalone npm package for browser camera calibration using OpenCV `calibrateCam
 
 Exports:
 
-- `initCalibrator(options?)`
-- `calibrateCameraRO(input, options?)`
-- `projectPoints(input, options?)`
-- `CALIBRATION_FLAGS` (OpenCV-compatible bitmasks)
+- `initCalibrator(options?)` — loads the WASM module and returns a **calibrator**.
+- `DEFAULT_WASM_MODULE_PATH` — resolved URL for the Emscripten loader (works with Vite hashed assets).
+- `CALIBRATION_FLAGS` — OpenCV-compatible bitmasks.
 
-The wrapper intentionally stays close to OpenCV:
+The returned **calibrator** object:
 
-- You provide multiview `objectPoints` and `imagePoints`.
-- `calibrateCameraRO` returns intrinsic/extrinsic parameters and refined object points (`newObjPoints`) when object-release is active.
-- `projectPoints` projects 3D object points back to image space for reprojection checks/visualization.
+- `calibrator.calibrateCameraRO(input)` — intrinsics, extrinsics, and `newObjPoints` when object-release is active.
+- `calibrator.projectPoints(input)` — projects 3D points to image space.
+- `calibrator.module` — low-level Emscripten module (advanced use only).
+
+The wrapper stays close to OpenCV: you pass multiview `objectPoints` and `imagePoints`; calibration optimizes the joint model OpenCV uses.
 
 ## Basic usage
 
 ```ts
 import {
-  calibrateCameraRO,
-  projectPoints,
+  initCalibrator,
   CALIBRATION_FLAGS
 } from "@deluksic/opencv-calibration-wasm";
 
-const calib = await calibrateCameraRO({
+const calibrator = await initCalibrator();
+// optional: await initCalibrator({ modulePath: customUrl })
+
+const calib = calibrator.calibrateCameraRO({
   objectPoints,
   imagePoints,
   imageSize: { width, height },
@@ -34,18 +37,14 @@ const calib = await calibrateCameraRO({
   flags: CALIBRATION_FLAGS.CALIB_RATIONAL_MODEL,
   criteria: { type: 3, maxCount: 30, epsilon: 1e-3 },
   maxDistCoeffs: 14
-}, {
-  modulePath: "/node_modules/@deluksic/opencv-calibration-wasm/dist/wasm/calibrate.mjs"
 });
 
-const reproj = await projectPoints({
+const reproj = calibrator.projectPoints({
   objectPoints: Array.from({ length: calib.viewCount }, () => calib.newObjPoints),
   rvecs: calib.rvecs,
   tvecs: calib.tvecs,
   cameraMatrix: calib.cameraMatrix,
   distortionCoefficients: calib.distortionCoefficients
-}, {
-  modulePath: "/node_modules/@deluksic/opencv-calibration-wasm/dist/wasm/calibrate.mjs"
 });
 ```
 
@@ -68,7 +67,7 @@ Use `CALIBRATION_FLAGS` instead of raw hex literals:
 
 ## Important OpenCV behavior
 
-When `calibrateCameraRO` runs in object-release mode (`iFixedPoint > 0` and `< pointsPerView - 1`):
+When calibration runs in object-release mode (`iFixedPoint > 0` and `< pointsPerView - 1`):
 
 - The optimized model includes `newObjPoints`, not only camera parameters.
 - Reprojection should use those optimized object points for consistency with solved poses.
@@ -105,14 +104,16 @@ source ./emsdk_env.sh # or set PATH as instructed
 ## Build
 
 ```bash
-npm run prepare:dist
-npm run build:opencv
-npm run build:wasm
+pnpm build:ts
+pnpm build:opencv
+pnpm build:wasm
 ```
+
+`build:ts` removes `dist/index.js`, `dist/index.d.ts`, and a legacy `dist/index.mjs` if present, then runs `tsc`. It does not touch `dist/wasm/`.
 
 Artifacts:
 
-- `dist/index.mjs`
+- `dist/index.js`
 - `dist/index.d.ts`
 - `dist/wasm/calibrate.mjs`
 - `dist/wasm/calibrate.wasm`
@@ -123,13 +124,15 @@ Artifacts:
 node examples/run-fixture.mjs ./examples/calibration_export_1777035497240.json
 ```
 
-## Browser usage
+## Browser / Vite
 
-```js
-import { calibrateCameraRO } from "@deluksic/opencv-calibration-wasm";
-const result = await calibrateCameraRO(input, {
-  modulePath: "/node_modules/@deluksic/opencv-calibration-wasm/dist/wasm/calibrate.mjs"
-});
+Default `initCalibrator()` resolves the WASM loader via `import.meta.url`, so Vite can hash and bundle `calibrate.mjs` / `calibrate.wasm` without hardcoding paths.
+
+```ts
+import { initCalibrator } from "@deluksic/opencv-calibration-wasm";
+
+const calibrator = await initCalibrator();
+const result = calibrator.calibrateCameraRO(input);
 ```
 
-In bundlers, ensure `calibrate.wasm` is served/copied with `calibrate.mjs`.
+If you need an explicit URL (e.g. custom hosting), pass `modulePath` to `initCalibrator({ modulePath })` once.

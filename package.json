@@ -1,15 +1,15 @@
 {
   "name": "@deluksic/opencv-calibration-wasm",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Browser-ready OpenCV calibrateCameraRO WASM package",
   "type": "module",
-  "main": "./dist/index.mjs",
-  "module": "./dist/index.mjs",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs"
+      "import": "./dist/index.js"
     },
     "./wasm/calibrate.mjs": "./dist/wasm/calibrate.mjs",
     "./wasm/calibrate.wasm": "./dist/wasm/calibrate.wasm"
@@ -20,12 +20,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "prepare:dist": "bash ./scripts/prepare-dist.sh",
+    "build:ts": "rm -f dist/index.js dist/index.d.ts dist/index.mjs && tsc -p tsconfig.json",
     "build:opencv": "bash ./scripts/build-opencv.sh",
     "build:wasm": "bash ./scripts/build-wrapper.sh",
-    "build": "npm run prepare:dist && npm run build:wasm",
-    "example": "node ./examples/run-fixture.mjs",
-    "prepublishOnly": "npm run build"
+    "example": "node ./examples/run-fixture.mjs"
   },
   "keywords": [
     "opencv",

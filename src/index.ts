@@ -81,8 +81,16 @@ interface CalibrateWasmModule {
 }
 
 type CreateModule = () => Promise<CalibrateWasmModule> | CalibrateWasmModule;
+type CalibratorOptions = { modulePath?: string };
+export interface Calibrator {
+    module: CalibrateWasmModule;
+    calibrateCameraRO(input: CalibrateCameraROInput): CalibrateCameraROResult;
+    projectPoints(input: ProjectPointsInput): ProjectPointsResult;
+}
 
 let modulePromise: Promise<CalibrateWasmModule> | undefined;
+let calibratorPromise: Promise<Calibrator> | undefined;
+export const DEFAULT_WASM_MODULE_PATH = new URL("./wasm/calibrate.mjs", import.meta.url).href;
 
 async function getModule(createModule: CreateModule): Promise<CalibrateWasmModule> {
     if (!modulePromise) {
@@ -143,20 +151,26 @@ function normalizeMultiviewInput(input: {
     };
 }
 
-export async function initCalibrator(options: { modulePath?: string } = {}): Promise<void> {
-    const modulePath = options.modulePath ?? "./wasm/calibrate.mjs";
-    const { default: createModule } = await import(modulePath);
-    await getModule(createModule as CreateModule);
+export async function initCalibrator(options: CalibratorOptions = {}): Promise<Calibrator> {
+    if (!calibratorPromise) {
+        calibratorPromise = (async () => {
+            const modulePath = options.modulePath ?? DEFAULT_WASM_MODULE_PATH;
+            const { default: createModule } = await import(modulePath);
+            const module = await getModule(createModule as CreateModule);
+            return {
+                module,
+                calibrateCameraRO: (input) => calibrateCameraROWithModule(module, input),
+                projectPoints: (input) => projectPointsWithModule(module, input),
+            };
+        })();
+    }
+    return calibratorPromise;
 }
 
-export async function calibrateCameraRO(
-    input: CalibrateCameraROInput,
-    options: { modulePath?: string } = {}
-): Promise<CalibrateCameraROResult> {
-    const modulePath = options.modulePath ?? "./wasm/calibrate.mjs";
-    const { default: createModule } = await import(modulePath);
-    const Module = await getModule(createModule as CreateModule);
-
+function calibrateCameraROWithModule(
+    Module: CalibrateWasmModule,
+    input: CalibrateCameraROInput
+): CalibrateCameraROResult {
     const packed = normalizeMultiviewInput(input);
     const frameCount = packed.pointsPerView.length;
     const totalPointCount = packed.imagePoints.length / 2;
@@ -321,14 +335,10 @@ export async function calibrateCameraRO(
     }
 }
 
-export async function projectPoints(
-    input: ProjectPointsInput,
-    options: { modulePath?: string } = {}
-): Promise<ProjectPointsResult> {
-    const modulePath = options.modulePath ?? "./wasm/calibrate.mjs";
-    const { default: createModule } = await import(modulePath);
-    const Module = await getModule(createModule as CreateModule);
-
+function projectPointsWithModule(
+    Module: CalibrateWasmModule,
+    input: ProjectPointsInput
+): ProjectPointsResult {
     const packed = normalizeMultiviewInput({
         objectPoints: input.objectPoints,
         imagePoints: input.objectPoints.map((v) => v.map(() => [0, 0] as [number, number])),
