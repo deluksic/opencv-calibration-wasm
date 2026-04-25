@@ -11,7 +11,8 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./wasm/calibrate.mjs": "./dist/wasm/calibrate.mjs",
+    "./wasm/*": "./dist/wasm/*",
+    "./wasm/calibrate.js": "./dist/wasm/calibrate.js",
     "./wasm/calibrate.wasm": "./dist/wasm/calibrate.wasm"
   },
   "files": [
@@ -20,10 +21,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "build:ts": "rm -f dist/index.js dist/index.d.ts dist/index.mjs && tsc -p tsconfig.json",
+    "build:ts": "rm -f dist/index.js dist/index.d.ts && tsc -p tsconfig.json",
     "build:opencv": "bash ./scripts/build-opencv.sh",
     "build:wasm": "bash ./scripts/build-wrapper.sh",
-    "example": "node ./examples/run-fixture.mjs"
+    "example": "node ./examples/run-fixture.js"
   },
   "keywords": [
     "opencv",

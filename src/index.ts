@@ -90,7 +90,7 @@ export interface Calibrator {
 
 let modulePromise: Promise<CalibrateWasmModule> | undefined;
 let calibratorPromise: Promise<Calibrator> | undefined;
-export const DEFAULT_WASM_MODULE_PATH = new URL("./wasm/calibrate.mjs", import.meta.url).href;
+export const DEFAULT_WASM_MODULE_PATH = new URL("./wasm/calibrate.js", import.meta.url).href;
 
 async function getModule(createModule: CreateModule): Promise<CalibrateWasmModule> {
     if (!modulePromise) {

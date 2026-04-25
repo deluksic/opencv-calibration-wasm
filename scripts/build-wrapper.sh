@@ -26,8 +26,8 @@ if [[ ! -d "${OPENCV_BUILD_DIR}/lib" ]]; then
   exit 1
 fi
 
+rm -rf "${DIST_WASM_DIR}"
 mkdir -p "${DIST_WASM_DIR}"
-rm -f "${DIST_WASM_DIR}/calibrate.preopt.wasm" "${DIST_WASM_DIR}/calibrate.optimizing.wasm"
 EMPP="${ROOT_DIR}/third_party/emsdk/upstream/emscripten/em++"
 EMPP="${EMSDK_DIR}/upstream/emscripten/em++"
 
@@ -55,10 +55,10 @@ EMPP="${EMSDK_DIR}/upstream/emscripten/em++"
   "${OPENCV_BUILD_DIR}/lib/libopencv_imgproc.a" \
   "${OPENCV_BUILD_DIR}/lib/libopencv_features2d.a" \
   "${OPENCV_BUILD_DIR}/lib/libopencv_calib3d.a" \
-  -o "${DIST_WASM_DIR}/calibrate.mjs"
+  -o "${DIST_WASM_DIR}/calibrate.js"
 
 echo "Built:"
-echo "  ${DIST_WASM_DIR}/calibrate.mjs"
+echo "  ${DIST_WASM_DIR}/calibrate.js"
 echo "  ${DIST_WASM_DIR}/calibrate.wasm"
 
 WASM_OPT_BIN="${EMSDK_DIR}/upstream/bin/wasm-opt"

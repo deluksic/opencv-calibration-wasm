@@ -109,24 +109,24 @@ pnpm build:opencv
 pnpm build:wasm
 ```
 
-`build:ts` removes `dist/index.js`, `dist/index.d.ts`, and a legacy `dist/index.mjs` if present, then runs `tsc`. It does not touch `dist/wasm/`.
+`build:ts` removes `dist/index.js`, `dist/index.d.ts`, then runs `tsc`. It does not touch `dist/wasm/`.
 
 Artifacts:
 
 - `dist/index.js`
 - `dist/index.d.ts`
-- `dist/wasm/calibrate.mjs`
+- `dist/wasm/calibrate.js`
 - `dist/wasm/calibrate.wasm`
 
 ## Example usage (Node smoke test)
 
 ```bash
-node examples/run-fixture.mjs ./examples/calibration_export_1777035497240.json
+pnpm example
 ```
 
 ## Browser / Vite
 
-Default `initCalibrator()` resolves the WASM loader via `import.meta.url`, so Vite can hash and bundle `calibrate.mjs` / `calibrate.wasm` without hardcoding paths.
+Default `initCalibrator()` resolves the WASM loader via `import.meta.url`, so Vite can hash and bundle `calibrate.js` / `calibrate.wasm` without hardcoding paths.
 
 ```ts
 import { initCalibrator } from "@deluksic/opencv-calibration-wasm";

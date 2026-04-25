@@ -39,7 +39,7 @@ for (const frame of frames) {
 }
 
 const calibratorOptions = {
-    modulePath: "../dist/wasm/calibrate.mjs",
+    modulePath: "../dist/wasm/calibrate.js",
 };
 const calibrator = await initCalibrator(calibratorOptions);
 
