@@ -81,7 +81,6 @@ interface CalibrateWasmModule {
 }
 
 type CreateModule = () => Promise<CalibrateWasmModule> | CalibrateWasmModule;
-type CalibratorOptions = { modulePath?: string };
 export interface Calibrator {
     module: CalibrateWasmModule;
     calibrateCameraRO(input: CalibrateCameraROInput): CalibrateCameraROResult;
@@ -90,7 +89,6 @@ export interface Calibrator {
 
 let modulePromise: Promise<CalibrateWasmModule> | undefined;
 let calibratorPromise: Promise<Calibrator> | undefined;
-export const DEFAULT_WASM_MODULE_PATH = new URL("./wasm/calibrate.js", import.meta.url).href;
 
 async function getModule(createModule: CreateModule): Promise<CalibrateWasmModule> {
     if (!modulePromise) {
@@ -151,11 +149,11 @@ function normalizeMultiviewInput(input: {
     };
 }
 
-export async function initCalibrator(options: CalibratorOptions = {}): Promise<Calibrator> {
+export async function initCalibrator(): Promise<Calibrator> {
     if (!calibratorPromise) {
         calibratorPromise = (async () => {
-            const modulePath = options.modulePath ?? DEFAULT_WASM_MODULE_PATH;
-            const { default: createModule } = await import(modulePath);
+            // @ts-expect-error
+            const { default: createModule } = await import("./wasm/calibrate.js");
             const module = await getModule(createModule as CreateModule);
             return {
                 module,
