@@ -1,16 +1,103 @@
-let modulePromise;
+export interface CalibrateCameraROCriteria {
+    type?: number;
+    maxCount?: number;
+    epsilon?: number;
+}
 
-async function getModule(createModule) {
+export interface CalibrateCameraROInput {
+    objectPoints: [number, number, number][][];
+    imagePoints: [number, number][][];
+    imageSize: { width: number; height: number };
+    cameraMatrix?: [[number, number, number], [number, number, number], [number, number, number]];
+    distortionCoefficients?: number[];
+    iFixedPoint?: number;
+    flags?: number;
+    criteria?: CalibrateCameraROCriteria;
+    maxDistCoeffs?: number;
+}
+
+export interface CalibrateCameraROResult {
+    retval: number;
+    pointCount: number;
+    viewCount: number;
+    imageSize: { width: number; height: number };
+    flags: number;
+    iFixedPoint: number;
+    reprojectionErrorPx: number;
+    cameraMatrix: [[number, number, number], [number, number, number], [number, number, number]];
+    distortionCoefficients: number[];
+    rvecs: [number, number, number][];
+    tvecs: [number, number, number][];
+    newObjPoints: [number, number, number][];
+}
+
+export interface ProjectPointsInput {
+    objectPoints: [number, number, number][][];
+    rvecs: [number, number, number][];
+    tvecs: [number, number, number][];
+    cameraMatrix: [[number, number, number], [number, number, number], [number, number, number]];
+    distortionCoefficients?: number[];
+}
+
+export interface ProjectPointsResult {
+    viewCount: number;
+    pointCount: number;
+    projectedImagePoints: [number, number][][];
+}
+
+export const CALIBRATION_FLAGS = {
+    CALIB_USE_INTRINSIC_GUESS: 0x00001,
+    CALIB_FIX_ASPECT_RATIO: 0x00002,
+    CALIB_FIX_PRINCIPAL_POINT: 0x00004,
+    CALIB_ZERO_TANGENT_DIST: 0x00008,
+    CALIB_FIX_FOCAL_LENGTH: 0x00010,
+    CALIB_FIX_K1: 0x00020,
+    CALIB_FIX_K2: 0x00040,
+    CALIB_FIX_K3: 0x00080,
+    CALIB_FIX_K4: 0x00800,
+    CALIB_FIX_K5: 0x01000,
+    CALIB_FIX_K6: 0x02000,
+    CALIB_RATIONAL_MODEL: 0x04000,
+    CALIB_THIN_PRISM_MODEL: 0x08000,
+    CALIB_FIX_S1_S2_S3_S4: 0x10000,
+    CALIB_TILTED_MODEL: 0x40000,
+    CALIB_FIX_TAUX_TAUY: 0x80000,
+    CALIB_FIX_TANGENT_DIST: 0x200000,
+} as const;
+
+interface PackedMultiviewInput {
+    objectPoints: Float32Array;
+    imagePoints: Float32Array;
+    pointsPerView: Int32Array;
+}
+
+interface CalibrateWasmModule {
+    _malloc(size: number): number;
+    _free(ptr: number): void;
+    _calibrate_camera_ro(...args: number[]): number;
+    _project_points(...args: number[]): void;
+    HEAPF32: Float32Array;
+    HEAP32: Int32Array;
+}
+
+type CreateModule = () => Promise<CalibrateWasmModule> | CalibrateWasmModule;
+
+let modulePromise: Promise<CalibrateWasmModule> | undefined;
+
+async function getModule(createModule: CreateModule): Promise<CalibrateWasmModule> {
     if (!modulePromise) {
-        modulePromise = createModule();
+        modulePromise = Promise.resolve(createModule());
     }
     return modulePromise;
 }
 
-function normalizeMultiviewInput(input) {
-    const objectPoints = [];
-    const imagePoints = [];
-    const pointsPerView = [];
+function normalizeMultiviewInput(input: {
+    objectPoints: [number, number, number][][];
+    imagePoints: [number, number][][];
+}): PackedMultiviewInput {
+    const objectPoints: number[] = [];
+    const imagePoints: number[] = [];
+    const pointsPerView: number[] = [];
 
     if (!Array.isArray(input.objectPoints) || !Array.isArray(input.imagePoints)) {
         throw new Error("objectPoints and imagePoints must be arrays of views.");
@@ -56,16 +143,19 @@ function normalizeMultiviewInput(input) {
     };
 }
 
-export async function initCalibrator(options = {}) {
+export async function initCalibrator(options: { modulePath?: string } = {}): Promise<void> {
     const modulePath = options.modulePath ?? "./wasm/calibrate.mjs";
     const { default: createModule } = await import(modulePath);
-    await getModule(createModule);
+    await getModule(createModule as CreateModule);
 }
 
-export async function calibrateCameraRO(input, options = {}) {
+export async function calibrateCameraRO(
+    input: CalibrateCameraROInput,
+    options: { modulePath?: string } = {}
+): Promise<CalibrateCameraROResult> {
     const modulePath = options.modulePath ?? "./wasm/calibrate.mjs";
     const { default: createModule } = await import(modulePath);
-    const Module = await getModule(createModule);
+    const Module = await getModule(createModule as CreateModule);
 
     const packed = normalizeMultiviewInput(input);
     const frameCount = packed.pointsPerView.length;
@@ -79,6 +169,12 @@ export async function calibrateCameraRO(input, options = {}) {
     const criteriaEpsilon = input.criteria?.epsilon ?? 1e-9;
     const width = input.imageSize.width;
     const height = input.imageSize.height;
+    const releaseObject = iFixedPoint > 0 && iFixedPoint < (packed.pointsPerView[0] - 1);
+    if ((flags & CALIBRATION_FLAGS.CALIB_USE_INTRINSIC_GUESS) !== 0 && releaseObject) {
+        throw new Error(
+            "OpenCV calibrateCameraRO does not support CALIB_USE_INTRINSIC_GUESS when object-release optimization is active (iFixedPoint > 0 and < pointsPerView-1)."
+        );
+    }
     const inputCameraMatrix = input.cameraMatrix;
     const hasCameraMatrixInit = Number(
         Array.isArray(inputCameraMatrix)
@@ -163,8 +259,8 @@ export async function calibrateCameraRO(input, options = {}) {
             )
         );
 
-        const rvecs = [];
-        const tvecs = [];
+        const rvecs: [number, number, number][] = [];
+        const tvecs: [number, number, number][] = [];
         for (let viewIdx = 0; viewIdx < frameCount; viewIdx += 1) {
             const base = (rvecsPtr >> 2) + (viewIdx * 3);
             const tbase = (tvecsPtr >> 2) + (viewIdx * 3);
@@ -181,7 +277,7 @@ export async function calibrateCameraRO(input, options = {}) {
         }
 
         const newObjCount = Module.HEAP32[newObjCountPtr >> 2];
-        const newObjPoints = [];
+        const newObjPoints: [number, number, number][] = [];
         for (let i = 0; i < Math.min(newObjCount, maxPointsPerView); i += 1) {
             const base = (newObjPtr >> 2) + (i * 3);
             newObjPoints.push([
@@ -225,14 +321,17 @@ export async function calibrateCameraRO(input, options = {}) {
     }
 }
 
-export async function projectPoints(input, options = {}) {
+export async function projectPoints(
+    input: ProjectPointsInput,
+    options: { modulePath?: string } = {}
+): Promise<ProjectPointsResult> {
     const modulePath = options.modulePath ?? "./wasm/calibrate.mjs";
     const { default: createModule } = await import(modulePath);
-    const Module = await getModule(createModule);
+    const Module = await getModule(createModule as CreateModule);
 
     const packed = normalizeMultiviewInput({
         objectPoints: input.objectPoints,
-        imagePoints: input.objectPoints.map((v) => v.map(() => [0, 0])),
+        imagePoints: input.objectPoints.map((v) => v.map(() => [0, 0] as [number, number])),
     });
     const viewCount = packed.pointsPerView.length;
     const totalPointCount = packed.objectPoints.length / 3;
@@ -299,11 +398,11 @@ export async function projectPoints(input, options = {}) {
             outPtr >> 2,
             (outPtr >> 2) + (totalPointCount * 2)
         );
-        const projectedImagePoints = [];
+        const projectedImagePoints: [number, number][][] = [];
         let offset = 0;
         for (let v = 0; v < viewCount; v += 1) {
             const count = packed.pointsPerView[v];
-            const view = [];
+            const view: [number, number][] = [];
             for (let i = 0; i < count; i += 1) {
                 view.push([projectedFlat[(offset + i) * 2 + 0], projectedFlat[(offset + i) * 2 + 1]]);
             }

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { calibrateCameraRO } from "../dist/index.mjs";
+import { calibrateCameraRO, projectPoints } from "../dist/index.mjs";
 
 const fixturePath = process.argv[2] ?? "./calibration_export_1777035497240.json";
 const json = JSON.parse(await readFile(new URL(fixturePath, import.meta.url), "utf-8"));
@@ -38,7 +38,12 @@ for (const frame of frames) {
     imagePoints.push(ids.map((id) => frame.byId.get(id)));
 }
 
-const result = await calibrateCameraRO({
+const calibratorOptions = {
+    modulePath: "../dist/wasm/calibrate.mjs",
+};
+
+const t0 = performance.now();
+const initial = await calibrateCameraRO({
     objectPoints,
     imagePoints,
     imageSize: json.resolution,
@@ -46,8 +51,88 @@ const result = await calibrateCameraRO({
     flags: 0,
     criteria: { type: 3, maxCount: 100, epsilon: 1e-9 },
     maxDistCoeffs: 14,
-}, {
-    modulePath: "../dist/wasm/calibrate.mjs",
-});
+}, calibratorOptions);
+const t1 = performance.now();
 
-console.log(JSON.stringify(result, null, 2));
+const refined = await calibrateCameraRO({
+    objectPoints,
+    imagePoints,
+    imageSize: json.resolution,
+    cameraMatrix: initial.cameraMatrix,
+    distortionCoefficients: initial.distortionCoefficients,
+    iFixedPoint: 1,
+    flags: 0,
+    criteria: { type: 3, maxCount: 30, epsilon: 1e-3 },
+    maxDistCoeffs: 14,
+}, calibratorOptions);
+const t2 = performance.now();
+
+const reprojectionObjectPoints = refined.newObjPoints.length === ids.length
+    ? Array.from({ length: frames.length }, () => refined.newObjPoints)
+    : objectPoints;
+const reprojectionOptimized = await projectPoints({
+    objectPoints: reprojectionObjectPoints,
+    rvecs: refined.rvecs,
+    tvecs: refined.tvecs,
+    cameraMatrix: refined.cameraMatrix,
+    distortionCoefficients: refined.distortionCoefficients,
+}, calibratorOptions);
+const t3 = performance.now();
+
+const singleFrameIndex = 0;
+const singleFrameObjectPoints = [reprojectionObjectPoints[singleFrameIndex]];
+const singleFrameRvecs = [refined.rvecs[singleFrameIndex]];
+const singleFrameTvecs = [refined.tvecs[singleFrameIndex]];
+const tSingle0 = performance.now();
+const singleFrameReprojection = await projectPoints({
+    objectPoints: singleFrameObjectPoints,
+    rvecs: singleFrameRvecs,
+    tvecs: singleFrameTvecs,
+    cameraMatrix: refined.cameraMatrix,
+    distortionCoefficients: refined.distortionCoefficients,
+}, calibratorOptions);
+const tSingle1 = performance.now();
+
+const initialMs = t1 - t0;
+const refinedMs = t2 - t1;
+const reprojectionOptimizedMs = t3 - t2;
+const singleFrameReprojectionMs = tSingle1 - tSingle0;
+
+function imageSpaceErrorStats(measuredImagePoints, projectedImagePoints) {
+    let sumSq = 0;
+    let sum = 0;
+    let max = 0;
+    let sampleCount = 0;
+    for (let viewIdx = 0; viewIdx < measuredImagePoints.length; viewIdx += 1) {
+        for (let pointIdx = 0; pointIdx < measuredImagePoints[viewIdx].length; pointIdx += 1) {
+            const [mx, my] = measuredImagePoints[viewIdx][pointIdx];
+            const [px, py] = projectedImagePoints[viewIdx][pointIdx];
+            const err = Math.hypot(px - mx, py - my);
+            sum += err;
+            sumSq += err * err;
+            if (err > max) max = err;
+            sampleCount += 1;
+        }
+    }
+    const mean = sampleCount > 0 ? (sum / sampleCount) : 0;
+    const rmse = sampleCount > 0 ? Math.sqrt(sumSq / sampleCount) : 0;
+    return { mean, rmse, max, sampleCount };
+}
+
+const errOptimized = imageSpaceErrorStats(imagePoints, reprojectionOptimized.projectedImagePoints);
+const errSingleFrame = imageSpaceErrorStats(
+    [imagePoints[singleFrameIndex]],
+    singleFrameReprojection.projectedImagePoints
+);
+
+console.log([
+    `Fixture: ${fixturePath}`,
+    `Views: ${initial.viewCount}, Shared points/view: ${ids.length}`,
+    `Initial pass: ${initialMs.toFixed(2)} ms, RMS: ${initial.reprojectionErrorPx.toFixed(6)} px`,
+    `Refine pass (with provided intrinsics): ${refinedMs.toFixed(2)} ms, RMS: ${refined.reprojectionErrorPx.toFixed(6)} px`,
+    `RMS delta (warm - initial): ${(refined.reprojectionErrorPx - initial.reprojectionErrorPx).toFixed(6)} px`,
+    `Image->Object(optimized)->Image: ${reprojectionOptimizedMs.toFixed(2)} ms, mean=${errOptimized.mean.toFixed(6)} px, rmse=${errOptimized.rmse.toFixed(6)} px, max=${errOptimized.max.toFixed(6)} px`,
+    `Single-frame reprojection (frame 0): ${singleFrameReprojectionMs.toFixed(2)} ms, mean=${errSingleFrame.mean.toFixed(6)} px, rmse=${errSingleFrame.rmse.toFixed(6)} px, max=${errSingleFrame.max.toFixed(6)} px`,
+    `Dist coeffs: initial=${initial.distortionCoefficients.length}, warm=${refined.distortionCoefficients.length}`,
+    `Refined target points: initial=${initial.newObjPoints.length}, warm=${refined.newObjPoints.length}`,
+].join("\n"));

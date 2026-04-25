@@ -21,7 +21,7 @@ The calibrator enforces the OpenCV object-release requirement by using only poin
 ## Repository layout
 
 - `src/native/wrapper.cpp` - C++ WASM wrapper
-- `src/index.mjs` - high-level JS API
+- `src/index.ts` - high-level TypeScript API
 - `scripts/build-opencv.sh` - macOS reproducible OpenCV build
 - `scripts/build-wrapper.sh` - WASM wrapper build
 - `dist/` - package output for publish
