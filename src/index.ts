@@ -45,6 +45,23 @@ export interface ProjectPointsResult {
     projectedImagePoints: [number, number][][];
 }
 
+export interface SolvePnPInput {
+    objectPoints: [number, number, number][];
+    imagePoints: [number, number][];
+    cameraMatrix: [[number, number, number], [number, number, number], [number, number, number]];
+    distortionCoefficients?: number[];
+    flags?: number;
+    useExtrinsicGuess?: boolean;
+    rvec?: [number, number, number];
+    tvec?: [number, number, number];
+}
+
+export interface SolvePnPResult {
+    success: boolean;
+    rvec: [number, number, number];
+    tvec: [number, number, number];
+}
+
 export const CALIBRATION_FLAGS = {
     CALIB_USE_INTRINSIC_GUESS: 0x00001,
     CALIB_FIX_ASPECT_RATIO: 0x00002,
@@ -75,6 +92,7 @@ interface CalibrateWasmModule {
     _malloc(size: number): number;
     _free(ptr: number): void;
     _calibrate_camera_ro(...args: number[]): number;
+    _solve_pnp(...args: number[]): number;
     _project_points(...args: number[]): void;
     HEAPF32: Float32Array;
     HEAP32: Int32Array;
@@ -84,6 +102,7 @@ type CreateModule = () => Promise<CalibrateWasmModule> | CalibrateWasmModule;
 export interface Calibrator {
     module: CalibrateWasmModule;
     calibrateCameraRO(input: CalibrateCameraROInput): CalibrateCameraROResult;
+    solvePnP(input: SolvePnPInput): SolvePnPResult;
     projectPoints(input: ProjectPointsInput): ProjectPointsResult;
 }
 
@@ -153,11 +172,12 @@ export async function initCalibrator(): Promise<Calibrator> {
     if (!calibratorPromise) {
         calibratorPromise = (async () => {
             // @ts-expect-error
-            const { default: createModule } = await import("./wasm/calibrate.js");
+            const { default: createModule } = await import(new URL("./wasm/calibrate.js", import.meta.url));
             const module = await getModule(createModule as CreateModule);
             return {
                 module,
                 calibrateCameraRO: (input) => calibrateCameraROWithModule(module, input),
+                solvePnP: (input) => solvePnPWithModule(module, input),
                 projectPoints: (input) => projectPointsWithModule(module, input),
             };
         })();
@@ -330,6 +350,105 @@ function calibrateCameraROWithModule(
         Module._free(newObjPtr);
         Module._free(distCountPtr);
         Module._free(newObjCountPtr);
+    }
+}
+
+function solvePnPWithModule(
+    Module: CalibrateWasmModule,
+    input: SolvePnPInput
+): SolvePnPResult {
+    if (!Array.isArray(input.objectPoints) || !Array.isArray(input.imagePoints)) {
+        throw new Error("objectPoints and imagePoints must be arrays.");
+    }
+    if (input.objectPoints.length !== input.imagePoints.length) {
+        throw new Error("objectPoints and imagePoints must have the same length.");
+    }
+    if (input.objectPoints.length === 0) {
+        throw new Error("At least one point is required.");
+    }
+
+    const pointCount = input.objectPoints.length;
+    const objectFlat = new Float32Array(pointCount * 3);
+    const imageFlat = new Float32Array(pointCount * 2);
+    for (let i = 0; i < pointCount; i += 1) {
+        const obj = input.objectPoints[i];
+        const img = input.imagePoints[i];
+        if (!Array.isArray(obj) || obj.length !== 3) {
+            throw new Error(`Object point at index ${i} must have length 3.`);
+        }
+        if (!Array.isArray(img) || img.length !== 2) {
+            throw new Error(`Image point at index ${i} must have length 2.`);
+        }
+        objectFlat[i * 3 + 0] = obj[0];
+        objectFlat[i * 3 + 1] = obj[1];
+        objectFlat[i * 3 + 2] = obj[2];
+        imageFlat[i * 2 + 0] = img[0];
+        imageFlat[i * 2 + 1] = img[1];
+    }
+
+    const k = input.cameraMatrix;
+    if (!Array.isArray(k) || k.length !== 3 || k.some((row) => !Array.isArray(row) || row.length !== 3)) {
+        throw new Error("cameraMatrix must be a 3x3 array.");
+    }
+    const kFlat = new Float32Array([
+        k[0][0], k[0][1], k[0][2],
+        k[1][0], k[1][1], k[1][2],
+        k[2][0], k[2][1], k[2][2],
+    ]);
+
+    const dist = new Float32Array(input.distortionCoefficients ?? []);
+    const useExtrinsicGuess = input.useExtrinsicGuess ?? false;
+    const rvecIn = input.rvec ?? [0, 0, 0];
+    const tvecIn = input.tvec ?? [0, 0, 0];
+    if (!Array.isArray(rvecIn) || rvecIn.length !== 3 || !Array.isArray(tvecIn) || tvecIn.length !== 3) {
+        throw new Error("rvec and tvec must have length 3.");
+    }
+    const rvecInit = new Float32Array([rvecIn[0], rvecIn[1], rvecIn[2]]);
+    const tvecInit = new Float32Array([tvecIn[0], tvecIn[1], tvecIn[2]]);
+    const flags = input.flags ?? 0;
+
+    const objPtr = Module._malloc(objectFlat.byteLength);
+    const imgPtr = Module._malloc(imageFlat.byteLength);
+    const kPtr = Module._malloc(kFlat.byteLength);
+    const distPtr = Module._malloc(Math.max(1, dist.byteLength));
+    const rvecPtr = Module._malloc(rvecInit.byteLength);
+    const tvecPtr = Module._malloc(tvecInit.byteLength);
+
+    try {
+        Module.HEAPF32.set(objectFlat, objPtr >> 2);
+        Module.HEAPF32.set(imageFlat, imgPtr >> 2);
+        Module.HEAPF32.set(kFlat, kPtr >> 2);
+        if (dist.length > 0) Module.HEAPF32.set(dist, distPtr >> 2);
+        Module.HEAPF32.set(rvecInit, rvecPtr >> 2);
+        Module.HEAPF32.set(tvecInit, tvecPtr >> 2);
+
+        const ok = Module._solve_pnp(
+            objPtr,
+            imgPtr,
+            pointCount,
+            kPtr,
+            distPtr,
+            dist.length,
+            flags,
+            useExtrinsicGuess ? 1 : 0,
+            rvecPtr,
+            tvecPtr
+        );
+
+        const rBase = rvecPtr >> 2;
+        const tBase = tvecPtr >> 2;
+        return {
+            success: ok !== 0,
+            rvec: [Module.HEAPF32[rBase + 0], Module.HEAPF32[rBase + 1], Module.HEAPF32[rBase + 2]],
+            tvec: [Module.HEAPF32[tBase + 0], Module.HEAPF32[tBase + 1], Module.HEAPF32[tBase + 2]],
+        };
+    } finally {
+        Module._free(objPtr);
+        Module._free(imgPtr);
+        Module._free(kPtr);
+        Module._free(distPtr);
+        Module._free(rvecPtr);
+        Module._free(tvecPtr);
     }
 }
 

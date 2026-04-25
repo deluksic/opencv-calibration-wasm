@@ -48,7 +48,7 @@ EMPP="${EMSDK_DIR}/upstream/emscripten/em++"
   -s USE_ZLIB=1 \
   -s ASSERTIONS=2 \
   -s DISABLE_EXCEPTION_CATCHING=0 \
-  -s EXPORTED_FUNCTIONS='["_calibrate_camera_ro","_project_points","_malloc","_free"]' \
+  -s EXPORTED_FUNCTIONS='["_calibrate_camera_ro","_solve_pnp","_project_points","_malloc","_free"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAPF32","HEAP32"]' \
   "${OPENCV_BUILD_DIR}/lib/libopencv_core.a" \
   "${OPENCV_BUILD_DIR}/lib/libopencv_flann.a" \

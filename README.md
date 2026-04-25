@@ -13,6 +13,7 @@ Exports:
 The returned **calibrator** object:
 
 - `calibrator.calibrateCameraRO(input)` — intrinsics, extrinsics, and `newObjPoints` when object-release is active.
+- `calibrator.solvePnP(input)` — estimates per-frame pose (`rvec`, `tvec`) from 2D/3D correspondences.
 - `calibrator.projectPoints(input)` — projects 3D points to image space.
 - `calibrator.module` — low-level Emscripten module (advanced use only).
 
@@ -43,6 +44,13 @@ const reproj = calibrator.projectPoints({
   objectPoints: Array.from({ length: calib.viewCount }, () => calib.newObjPoints),
   rvecs: calib.rvecs,
   tvecs: calib.tvecs,
+  cameraMatrix: calib.cameraMatrix,
+  distortionCoefficients: calib.distortionCoefficients
+});
+
+const pose = calibrator.solvePnP({
+  objectPoints: objectPointsForOneFrame,
+  imagePoints: imagePointsForOneFrame,
   cameraMatrix: calib.cameraMatrix,
   distortionCoefficients: calib.distortionCoefficients
 });
