@@ -98,9 +98,116 @@ interface CalibrateWasmModule {
     HEAP32: Int32Array;
 }
 
-type CreateModule = (
-    options?: { locateFile?: (path: string) => string }
-) => Promise<CalibrateWasmModule> | CalibrateWasmModule;
+/** 64 KiB; WebAssembly memory must be sized in page multiples. */
+export const CALIBRATOR_WASM_PAGE_SIZE = 64 * 1024;
+
+/**
+ * Default / minimum initial heap for this build (`-sINITIAL_MEMORY` in `scripts/build-wrapper.sh`).
+ * Runtime `initialMemoryBytes` must be ≥ this after rounding up to a page size.
+ */
+export const CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT = 32 * 1024 * 1024;
+
+/**
+ * Upper bound the module can grow to (`-sMAXIMUM_MEMORY` in `scripts/build-wrapper.sh`).
+ * Runtime `maximumMemoryBytes` cannot exceed this without rebuilding the wasm.
+ */
+export const CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES = 512 * 1024 * 1024;
+
+export interface InitCalibratorOptions {
+    wasmPath: string;
+    /**
+     * Initial linear memory in bytes (rounded up to the next 64 KiB page).
+     * Must be ≥ {@link CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT} and ≤ `maximumMemoryBytes` when both are set.
+     */
+    initialMemoryBytes?: number;
+    /**
+     * Maximum linear memory in bytes (rounded up to the next 64 KiB page).
+     * Caps heap growth below {@link CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES} when smaller; cannot exceed the compile-time cap.
+     */
+    maximumMemoryBytes?: number;
+}
+
+function alignHeapSizeUp(bytes: number): number {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        throw new Error("Memory size must be a finite positive number of bytes.");
+    }
+    return Math.ceil(bytes / CALIBRATOR_WASM_PAGE_SIZE) * CALIBRATOR_WASM_PAGE_SIZE;
+}
+
+function bytesToWasmPages(bytes: number): number {
+    if (bytes % CALIBRATOR_WASM_PAGE_SIZE !== 0) {
+        throw new Error(`Memory sizes must be multiples of ${CALIBRATOR_WASM_PAGE_SIZE} (64 KiB).`);
+    }
+    return bytes / CALIBRATOR_WASM_PAGE_SIZE;
+}
+
+function buildEmscriptenModuleArgs(options: InitCalibratorOptions): {
+    locateFile: (path: string) => string;
+    INITIAL_MEMORY?: number;
+    wasmMemory?: WebAssembly.Memory;
+} {
+    const locateFile = (path: string) => (path.endsWith(".wasm") ? options.wasmPath : path);
+    const hasInitial = options.initialMemoryBytes != null;
+    const hasMax = options.maximumMemoryBytes != null;
+
+    if (!hasInitial && !hasMax) {
+        return { locateFile };
+    }
+
+    if (hasInitial && !hasMax) {
+        const initial = alignHeapSizeUp(options.initialMemoryBytes!);
+        if (initial < CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT) {
+            throw new Error(
+                `initialMemoryBytes rounds to ${initial} bytes; must be ≥ ${CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT} (this wasm build's minimum initial heap).`
+            );
+        }
+        if (initial > CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES) {
+            throw new Error(
+                `initialMemoryBytes rounds to ${initial} bytes; cannot exceed ${CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES} (compile-time maximum for this build).`
+            );
+        }
+        return { locateFile, INITIAL_MEMORY: initial };
+    }
+
+    const maxBytesRaw = hasMax ? alignHeapSizeUp(options.maximumMemoryBytes!) : CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES;
+    if (maxBytesRaw > CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES) {
+        throw new Error(
+            `maximumMemoryBytes rounds to ${maxBytesRaw} bytes; cannot exceed ${CALIBRATOR_WASM_MAXIMUM_MEMORY_BYTES} without rebuilding the wasm.`
+        );
+    }
+    if (maxBytesRaw < CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT) {
+        throw new Error(
+            `maximumMemoryBytes must be at least ${CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT} (this build's minimum initial heap).`
+        );
+    }
+
+    const initialBytes = hasInitial
+        ? alignHeapSizeUp(options.initialMemoryBytes!)
+        : CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT;
+
+    if (initialBytes < CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT) {
+        throw new Error(
+            `initialMemoryBytes rounds to ${initialBytes} bytes; must be ≥ ${CALIBRATOR_WASM_INITIAL_MEMORY_BYTES_DEFAULT} (this wasm build's minimum initial heap).`
+        );
+    }
+    if (initialBytes > maxBytesRaw) {
+        throw new Error("initialMemoryBytes must be less than or equal to maximumMemoryBytes (after rounding to 64 KiB pages).");
+    }
+
+    return {
+        locateFile,
+        wasmMemory: new WebAssembly.Memory({
+            initial: bytesToWasmPages(initialBytes),
+            maximum: bytesToWasmPages(maxBytesRaw),
+        }),
+    };
+}
+
+type CreateModule = (options?: {
+    locateFile?: (path: string, prefix?: string) => string;
+    INITIAL_MEMORY?: number;
+    wasmMemory?: WebAssembly.Memory;
+}) => Promise<CalibrateWasmModule> | CalibrateWasmModule;
 export interface Calibrator {
     module: CalibrateWasmModule;
     calibrateCameraRO(input: CalibrateCameraROInput): CalibrateCameraROResult;
@@ -160,15 +267,13 @@ function normalizeMultiviewInput(input: {
     };
 }
 
-export async function initCalibrator(options: { wasmPath: string }): Promise<Calibrator> {
+export async function initCalibrator(options: InitCalibratorOptions): Promise<Calibrator> {
     if (!options?.wasmPath) {
         throw new Error("initCalibrator requires { wasmPath }.");
     }
     // @ts-expect-error generated at wasm build time
     const { default: createModule } = await import("./wasm/calibrate.js");
-    const module = await Promise.resolve((createModule as CreateModule)({
-        locateFile: (path: string) => (path.endsWith(".wasm") ? options.wasmPath : path),
-    }));
+    const module = await Promise.resolve((createModule as CreateModule)(buildEmscriptenModuleArgs(options)));
     return {
         module,
         calibrateCameraRO: (input) => calibrateCameraROWithModule(module, input),
